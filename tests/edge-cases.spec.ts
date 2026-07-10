@@ -274,3 +274,59 @@ test.describe('Длинные значения полей', () => {
   });
 
 });
+test.describe('Защита от повторной отправки', () => {
+
+  test('Высокий: двойной клик по Send не списывает деньги дважды', async ({ page }) => {
+    await registerAndLogin(page);
+    await addBalance(page, 1000);
+
+    await page.goto('/');
+    await page.getByPlaceholder('+7 999 123-45-67').fill('+7 999 111-22-33');
+    await page.getByPlaceholder('0.00').fill('300');
+    await page.getByPlaceholder('e.g. debt repayment').fill('Double click test');
+
+    const sendButton = page.getByRole('button', { name: 'Send' });
+
+    // Кликаем дважды подряд без ожидания между кликами
+    await Promise.all([
+      page.waitForResponse(resp => resp.request().method() === 'POST').catch(() => null),
+      sendButton.click(),
+      sendButton.click(),
+    ]);
+
+    // Даём странице немного времени на обработку возможного второго запроса
+    await page.waitForTimeout(1000);
+
+    // Если бы перевод прошёл дважды: 1000 - 300 - 300 = 400
+    // Если корректно один раз: 1000 - 300 = 700
+    const balanceHeading = page.getByRole('heading', { name: /Balance:/ });
+    const balanceText = await balanceHeading.textContent();
+    console.log('BALANCE AFTER DOUBLE CLICK:', balanceText);
+
+    await expect(balanceHeading).toHaveText('Balance: 700');
+  });
+
+});
+test.describe('Кнопка Cancel на форме перевода', () => {
+
+  test('Низкий: Cancel очищает заполненные поля формы перевода', async ({ page }) => {
+    await registerAndLogin(page);
+    await addBalance(page, 100);
+
+    await page.goto('/');
+    await page.getByPlaceholder('+7 999 123-45-67').fill('+7 999 111-22-33');
+    await page.getByPlaceholder('0.00').fill('50');
+    await page.getByPlaceholder('e.g. debt repayment').fill('Test purpose');
+
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    // Проверяем, что поля очистились
+    await expect(page.getByPlaceholder('+7 999 123-45-67')).toHaveValue('');
+    await expect(page.getByPlaceholder('0.00')).toHaveValue('');
+    await expect(page.getByPlaceholder('e.g. debt repayment')).toHaveValue('');
+
+    // И баланс не изменился — перевод точно не был отправлен
+    await expect(page.getByRole('heading', { name: 'Balance: 100' })).toBeVisible();
+  });
+
+});
